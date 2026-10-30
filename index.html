@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>勤務時間計算</title>
+<style>
+:root{
+  --bg:#f5f6f8;--card:#ffffff;--text:#1f2933;--muted:#6b7280;--line:#e3e6ea;
+  --accent:#2563eb;--accent-soft:#e8f0ff;--good:#047857;--good-soft:#e6f6ef;
+  --warn:#b45309;--warn-soft:#fdf3e2;--bad:#b91c1c;--break:#f59e0b;--leave:#8b5cf6;--work:#3b82f6;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#111418;--card:#1a1f26;--text:#e5e7eb;--muted:#9ca3af;--line:#2c333c;
+    --accent:#60a5fa;--accent-soft:#1d2a3d;--good:#34d399;--good-soft:#123227;
+    --warn:#fbbf24;--warn-soft:#3a2d12;--bad:#f87171;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP","Yu Gothic UI",sans-serif;line-height:1.6}
+header{background:var(--card);border-bottom:1px solid var(--line)}
+.wrap{max-width:860px;margin:0 auto;padding:0 16px}
+header h1{font-size:1.15rem;margin:0;padding:14px 0 6px}
+nav{display:flex;gap:4px;overflow-x:auto}
+nav button{border:0;background:none;color:var(--muted);font:inherit;font-weight:600;
+  padding:10px 14px;border-bottom:3px solid transparent;cursor:pointer;white-space:nowrap}
+nav button.active{color:var(--accent);border-bottom-color:var(--accent)}
+main{padding:16px 0 40px}
+section{display:none}section.active{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+.card h2{font-size:1rem;margin:0 0 12px}
+.hint{color:var(--muted);font-size:.85rem;margin:6px 0 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:var(--muted);font-weight:600}
+input,select{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px;min-width:0}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:0}
+.row{display:flex;gap:6px;align-items:center}
+.row input{flex:1}
+.btn{font:inherit;font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--text);
+  border-radius:8px;padding:8px 12px;cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.small{padding:4px 10px;font-size:.85rem}
+.btn.danger{color:var(--bad)}
+.hm{display:flex;gap:6px;align-items:center}
+.hm input{width:70px}
+.results{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:14px}
+.res{background:var(--bg);border-radius:10px;padding:10px 12px}
+.res .k{font-size:.8rem;color:var(--muted);font-weight:600}
+.res .v{font-size:1.35rem;font-weight:700;font-variant-numeric:tabular-nums}
+.res.main{background:var(--accent-soft)}
+.res.good{background:var(--good-soft)}.res.good .v{color:var(--good)}
+.res.warn{background:var(--warn-soft)}.res.warn .v{color:var(--warn)}
+.msg{margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--bg);font-size:.9rem}
+.msg.err{color:var(--bad)}
+.modes{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.modes label{border:1px solid var(--line);border-radius:999px;padding:6px 12px;cursor:pointer;font-size:.9rem}
+.modes input{display:none}
+.modes label:has(input:checked){background:var(--accent);border-color:var(--accent);color:#fff}
+.timeline{position:relative;height:30px;background:var(--bg);border-radius:6px;margin-top:16px;overflow:hidden;border:1px solid var(--line)}
+.seg{position:absolute;top:0;bottom:0}
+.seg.work{background:var(--work);opacity:.35}
+.seg.break{background:var(--break);opacity:.85}
+.seg.leave{background:var(--leave);opacity:.85}
+.tl-labels{display:flex;justify-content:space-between;font-size:.75rem;color:var(--muted);margin-top:2px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.8rem;color:var(--muted);margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+table{width:100%;border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums}
+th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:center}
+th{color:var(--muted);font-size:.8rem}
+.tbl{overflow-x:auto}
+.over{color:var(--warn);font-weight:700}
+.breaks .brow{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.breaks .brow input{width:120px}
+@media (max-width:480px){.res .v{font-size:1.15rem}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>勤務時間計算</h1>
+    <nav>
+      <button data-tab="today" class="active">今日の勤務</button>
+      <button data-tab="leave">時間休の計算</button>
+      <button data-tab="records">記録</button>
+      <button data-tab="settings">設定</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+<!-- 今日の勤務 -->
+<section id="today" class="active">
+  <div class="card">
+    <h2>出勤・退勤</h2>
+    <div class="grid">
+      <label class="f">日付<input type="date" id="tDate"></label>
+      <label class="f">出勤時刻
+        <span class="row"><input type="time" id="tIn" step="60"><button class="btn small" data-now="tIn">今</button></span>
+      </label>
+      <label class="f">退勤時刻
+        <span class="row"><input type="time" id="tOut" step="60"><button class="btn small" data-now="tOut">今</button></span>
+      </label>
+      <label class="f">この日の時間休（任意）
+        <span class="hm"><input type="number" id="tLeaveH" min="0" max="8" value="0">時間
+        <input type="number" id="tLeaveM" min="0" max="59" step="5" value="0">分</span>
+      </label>
+    </div>
+    <div id="todayOut"></div>
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn primary" id="saveRec">記録に保存</button>
+      <button class="btn" id="clearToday">入力をクリア</button>
+    </div>
+  </div>
+</section>
+
+<!-- 時間休 -->
+<section id="leave">
+  <div class="card">
+    <h2>時間休（休暇時間）の時刻計算</h2>
+    <div class="modes">
+      <label><input type="radio" name="lmode" value="range" checked>開始〜終了 → 時間数</label>
+      <label><input type="radio" name="lmode" value="fromStart">開始＋時間数 → 終了時刻</label>
+      <label><input type="radio" name="lmode" value="fromEnd">終了＋時間数 → 開始時刻</label>
+    </div>
+    <div class="grid">
+      <label class="f" id="lStartWrap">休暇の開始時刻<input type="time" id="lStart" step="60"></label>
+      <label class="f" id="lEndWrap">休暇の終了時刻<input type="time" id="lEnd" step="60"></label>
+      <label class="f" id="lDurWrap">取得する時間数
+        <span class="hm"><input type="number" id="lH" min="0" max="8" value="1">時間
+        <input type="number" id="lM" min="0" max="59" step="5" value="0">分</span>
+      </label>
+    </div>
+    <p class="hint">休暇の途中に設定した休憩時間が入る場合、その分は休暇時間に数えず、時刻を自動でずらして計算します。</p>
+    <div id="leaveOut"></div>
+    <div class="timeline" id="leaveTl"></div>
+    <div class="tl-labels" id="leaveTlLabels"></div>
+    <div class="legend"><span><i style="background:var(--work);opacity:.35"></i>勤務</span><span><i style="background:var(--break)"></i>休憩</span><span><i style="background:var(--leave)"></i>時間休</span></div>
+  </div>
+</section>
+
+<!-- 記録 -->
+<section id="records">
+  <div class="card">
+    <h2>月ごとの記録</h2>
+    <div class="row" style="flex-wrap:wrap;gap:8px">
+      <input type="month" id="rMonth" style="flex:0 0 auto">
+      <button class="btn" id="csvBtn">CSVで保存</button>
+    </div>
+    <div class="results" id="rSum"></div>
+    <div class="tbl" style="margin-top:12px">
+      <table>
+        <thead><tr><th>日付</th><th>出勤</th><th>退勤</th><th>休憩</th><th>時間休</th><th>勤務</th><th>時間外</th><th></th></tr></thead>
+        <tbody id="rBody"></tbody>
+      </table>
+    </div>
+    <p class="hint">記録はこのブラウザ内に保存されます（他の端末とは共有されません）。計算は現在の設定の休憩時間で行います。</p>
+  </div>
+</section>
+
+<!-- 設定 -->
+<section id="settings">
+  <div class="card">
+    <h2>所定の勤務時間</h2>
+    <div class="grid">
+      <label class="f">勤務開始<input type="time" id="sStart" step="60"></label>
+      <label class="f">勤務終了<input type="time" id="sEnd" step="60"></label>
+    </div>
+    <div id="sSummary" class="msg"></div>
+  </div>
+  <div class="card breaks">
+    <h2>自分の休憩時間</h2>
+    <div id="bList"></div>
+    <button class="btn small" id="addBreak">＋ 休憩を追加</button>
+    <p class="hint">休憩を分けて取る場合は複数登録できます。ここで設定した時間帯が、勤務時間・時間休の計算から自動で除かれます。</p>
+  </div>
+  <div class="card">
+    <h2>データ</h2>
+    <button class="btn danger" id="resetAll">すべての記録を削除</button>
+  </div>
+</section>
+
+</main>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const $$ = s => [...document.querySelectorAll(s)];
+
+  // ---------- 時刻ユーティリティ（分単位で計算） ----------
+  const toMin = v => { if (!v) return null; const [h, m] = v.split(':').map(Number); return isNaN(h) ? null : h * 60 + m; };
+  const toHM = m => { m = Math.round(m); const h = Math.floor(m / 60), mm = ((m % 60) + 60) % 60; return String(h).padStart(2, '0') + ':' + String(mm).padStart(2, '0'); };
+  const dur = m => {
+    m = Math.round(m); const sign = m < 0 ? '−' : ''; m = Math.abs(m);
+    const h = Math.floor(m / 60), mm = m % 60;
+    if (h === 0) return sign + mm + '分';
+    return sign + h + '時間' + (mm ? String(mm).padStart(2, '0') + '分' : '');
+  };
+  const hmShort = m => { m = Math.round(m); const s = m < 0 ? '-' : ''; m = Math.abs(m); return s + Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0'); };
+  const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
+
+  // ---------- 保存 ----------
+  const KEY = 'kinmu-calc-v1';
+  const state = {
+    settings: { start: '08:15', end: '16:45', breaks: [{ s: '12:15', e: '13:00' }] },
+    records: {}
+  };
+  function load() {
+    try {
+      const d = JSON.parse(localStorage.getItem(KEY));
+      if (d) { Object.assign(state.settings, d.settings || {}); state.records = d.records || {}; }
+    } catch (e) { /* 保存が使えない環境でも動作させる */ }
+  }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+
+  // ---------- 休憩に関する計算 ----------
+  const breaks = () => state.settings.breaks
+    .map(b => ({ s: toMin(b.s), e: toMin(b.e) }))
+    .filter(b => b.s != null && b.e != null && b.e > b.s)
+    .sort((a, b) => a.s - b.s);
+  const breakIn = (s, e) => breaks().reduce((t, b) => t + overlap(s, e, b.s, b.e), 0);
+  const inBreak = t => breaks().some(b => t >= b.s && t < b.e);
+  // 開始時刻から、休憩を除いて n 分進めた時刻
+  function addWork(start, n) {
+    let t = start, rem = n, guard = 0;
+    while (rem > 0 && guard++ < 3000) { if (!inBreak(t)) rem--; t++; }
+    return t;
+  }
+  // 終了時刻から、休憩を除いて n 分さかのぼった時刻
+  function subWork(end, n) {
+    let t = end, rem = n, guard = 0;
+    while (rem > 0 && guard++ < 3000) { if (!inBreak(t - 1)) rem--; t--; }
+    return t;
+  }
+  function scheduled() {
+    const S = toMin(state.settings.start), E = toMin(state.settings.end);
+    if (S == null || E == null || E <= S) return { S, E, total: 0, br: 0, ok: false };
+    const br = breakIn(S, E);
+    return { S, E, br, total: E - S - br, ok: true };
+  }
+  function calcDay(rec) {
+    const a = toMin(rec.in), b = toMin(rec.out), leave = rec.leave || 0;
+    if (a == null || b == null || b <= a) return null;
+    const br = breakIn(a, b), work = b - a - br;
+    const over = work + leave - scheduled().total;
+    return { stay: b - a, br, work, leave, over };
+  }
+
+  const resBox = (k, v, cls = '') => `<div class="res ${cls}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  const leaveVal = (h, m) => (Math.max(0, parseInt($(h).value) || 0) * 60) + Math.max(0, parseInt($(m).value) || 0);
+  const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+
+  // ---------- タブ ----------
+  $$('nav button').forEach(b => b.addEventListener('click', () => {
+    $$('nav button').forEach(x => x.classList.toggle('active', x === b));
+    $$('section').forEach(s => s.classList.toggle('active', s.id === b.dataset.tab));
+    if (b.dataset.tab === 'records') renderRecords();
+  }));
+
+  // ---------- 今日の勤務 ----------
+  function renderToday() {
+    const out = $('#todayOut');
+    const a = toMin($('#tIn').value), b = toMin($('#tOut').value);
+    const leave = leaveVal('#tLeaveH', '#tLeaveM');
+    const sch = scheduled();
+    if (a == null) { out.innerHTML = `<div class="msg">出勤時刻を入力してください。</div>`; return; }
+    if (b == null) {
+      const need = Math.max(0, sch.total - leave);
+      const t = addWork(a, need);
+      out.innerHTML = `<div class="results">
+        ${resBox('所定時間に達する時刻', toHM(t), 'main')}
+        ${resBox('必要な実働', dur(need))}
+      </div><p class="hint">出勤 ${toHM(a)} から休憩を除いて計算した時刻です${leave ? '（時間休 ' + dur(leave) + ' を差し引き済み）' : ''}。</p>`;
+      return;
+    }
+    if (b <= a) { out.innerHTML = `<div class="msg err">退勤時刻は出勤時刻より後にしてください。</div>`; return; }
+    const r = calcDay({ in: $('#tIn').value, out: $('#tOut').value, leave });
+    const overCls = r.over > 0 ? 'warn' : (r.over === 0 ? 'good' : '');
+    out.innerHTML = `<div class="results">
+      ${resBox('勤務時間（実働）', dur(r.work), 'main')}
+      ${resBox('在校時間', dur(r.stay))}
+      ${resBox('休憩', dur(r.br))}
+      ${leave ? resBox('時間休', dur(leave)) : ''}
+      ${resBox(r.over >= 0 ? '時間外' : '所定に対する不足', dur(Math.abs(r.over)), overCls)}
+    </div>`;
+  }
+  ['#tIn', '#tOut', '#tLeaveH', '#tLeaveM'].forEach(s => $(s).addEventListener('input', renderToday));
+  $('#tDate').addEventListener('change', () => {
+    const r = state.records[$('#tDate').value];
+    $('#tIn').value = r ? r.in : ''; $('#tOut').value = r ? r.out : '';
+    $('#tLeaveH').value = r ? Math.floor((r.leave || 0) / 60) : 0;
+    $('#tLeaveM').value = r ? (r.leave || 0) % 60 : 0;
+    renderToday();
+  });
+  $$('[data-now]').forEach(b => b.addEventListener('click', e => {
+    e.preventDefault(); const d = new Date();
+    $('#' + b.dataset.now).value = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    renderToday();
+  }));
+  $('#saveRec').addEventListener('click', () => {
+    const date = $('#tDate').value;
+    if (!date || !$('#tIn').value) { alert('日付と出勤時刻を入力してください。'); return; }
+    state.records[date] = { in: $('#tIn').value, out: $('#tOut').value, leave: leaveVal('#tLeaveH', '#tLeaveM') };
+    save();
+    const btn = $('#saveRec'); btn.textContent = '保存しました'; setTimeout(() => btn.textContent = '記録に保存', 1500);
+  });
+  $('#clearToday').addEventListener('click', () => {
+    $('#tIn').value = ''; $('#tOut').value = ''; $('#tLeaveH').value = 0; $('#tLeaveM').value = 0; renderToday();
+  });
+
+  // ---------- 時間休 ----------
+  const lmode = () => $('input[name=lmode]:checked').value;
+  function renderLeave() {
+    const mode = lmode(), sch = scheduled();
+    $('#lStartWrap').style.display = mode === 'fromEnd' ? 'none' : '';
+    $('#lEndWrap').style.display = mode === 'fromStart' ? 'none' : '';
+    $('#lDurWrap').style.display = mode === 'range' ? 'none' : '';
+    const out = $('#leaveOut');
+    let s = toMin($('#lStart').value), e = toMin($('#lEnd').value);
+    const n = leaveVal('#lH', '#lM');
+    let html = '', warn = '';
+
+    if (mode === 'range') {
+      if (s == null || e == null) { out.innerHTML = `<div class="msg">開始時刻と終了時刻を入力してください。</div>`; drawTl(null); return; }
+      if (e <= s) { out.innerHTML = `<div class="msg err">終了時刻は開始時刻より後にしてください。</div>`; drawTl(null); return; }
+      const br = breakIn(s, e), len = e - s - br;
+      html = resBox('休暇時間', dur(len), 'main') + resBox('間に含まれる休憩', dur(br)) + resBox('時刻の幅', dur(e - s));
+    } else if (mode === 'fromStart') {
+      if (s == null) { out.innerHTML = `<div class="msg">開始時刻を入力してください。</div>`; drawTl(null); return; }
+      if (n <= 0) { out.innerHTML = `<div class="msg">取得する時間数を入力してください。</div>`; drawTl(null); return; }
+      e = addWork(s, n);
+      html = resBox('休暇の終了時刻', toHM(e), 'main') + resBox('間に含まれる休憩', dur(breakIn(s, e)));
+    } else {
+      if (e == null) { out.innerHTML = `<div class="msg">終了時刻を入力してください。</div>`; drawTl(null); return; }
+      if (n <= 0) { out.innerHTML = `<div class="msg">取得する時間数を入力してください。</div>`; drawTl(null); return; }
+      s = subWork(e, n);
+      html = resBox('休暇の開始時刻', toHM(s), 'main') + resBox('間に含まれる休憩', dur(breakIn(s, e)));
+    }
+    if (sch.ok && (s < sch.S || e > sch.E)) warn = `<div class="msg err">所定の勤務時間（${state.settings.start}〜${state.settings.end}）の外にはみ出しています。</div>`;
+    if (sch.ok) {
+      const workLeft = sch.total - (e - s - breakIn(s, e));
+      html += resBox('この日の残り勤務', dur(Math.max(0, workLeft)));
+    }
+    out.innerHTML = `<div class="results">${html}</div>${warn}`;
+    drawTl({ s, e });
+  }
+  function drawTl(lv) {
+    const sch = scheduled(), tl = $('#leaveTl'), lab = $('#leaveTlLabels');
+    if (!sch.ok) { tl.innerHTML = ''; lab.innerHTML = ''; return; }
+    let lo = sch.S, hi = sch.E;
+    if (lv) { lo = Math.min(lo, lv.s); hi = Math.max(hi, lv.e); }
+    const span = hi - lo, pct = m => ((m - lo) / span * 100).toFixed(2) + '%';
+    const seg = (cls, a, b) => `<div class="seg ${cls}" style="left:${pct(a)};width:${((b - a) / span * 100).toFixed(2)}%"></div>`;
+    let h = seg('work', sch.S, sch.E);
+    if (lv) h += seg('leave', lv.s, lv.e);
+    breaks().forEach(b => { const a = Math.max(b.s, lo), c = Math.min(b.e, hi); if (c > a) h += seg('break', a, c); });
+    tl.innerHTML = h;
+    lab.innerHTML = `<span>${toHM(lo)}</span><span>${toHM(hi)}</span>`;
+  }
+  $$('input[name=lmode]').forEach(r => r.addEventListener('change', renderLeave));
+  ['#lStart', '#lEnd', '#lH', '#lM'].forEach(s => $(s).addEventListener('input', renderLeave));
+
+  // ---------- 記録 ----------
+  function renderRecords() {
+    const ym = $('#rMonth').value;
+    const days = Object.keys(state.records).filter(d => d.startsWith(ym)).sort();
+    let tw = 0, to = 0, tl = 0, n = 0;
+    const wd = ['日', '月', '火', '水', '木', '金', '土'];
+    $('#rBody').innerHTML = days.map(d => {
+      const r = state.records[d], c = calcDay(r);
+      const dt = new Date(d + 'T00:00');
+      const label = (dt.getMonth() + 1) + '/' + dt.getDate() + '(' + wd[dt.getDay()] + ')';
+      if (c) { tw += c.work; to += Math.max(0, c.over); tl += c.leave; n++; }
+      return `<tr><td>${label}</td><td>${r.in || ''}</td><td>${r.out || ''}</td>
+        <td>${c ? hmShort(c.br) : ''}</td><td>${r.leave ? hmShort(r.leave) : ''}</td>
+        <td>${c ? hmShort(c.work) : ''}</td>
+        <td class="${c && c.over > 0 ? 'over' : ''}">${c ? hmShort(c.over) : ''}</td>
+        <td><button class="btn small danger" data-del="${d}">削除</button></td></tr>`;
+    }).join('') || `<tr><td colspan="8" style="color:var(--muted)">この月の記録はまだありません</td></tr>`;
+    $('#rSum').innerHTML = resBox('記録日数', n + '日') + resBox('勤務合計', dur(tw), 'main') +
+      resBox('時間外合計', dur(to), to > 0 ? 'warn' : '') + resBox('時間休合計', dur(tl));
+    $$('[data-del]').forEach(b => b.addEventListener('click', () => {
+      if (!confirm(b.dataset.del + ' の記録を削除しますか？')) return;
+      delete state.records[b.dataset.del]; save(); renderRecords();
+    }));
+  }
+  $('#rMonth').addEventListener('change', renderRecords);
+  $('#csvBtn').addEventListener('click', () => {
+    const ym = $('#rMonth').value;
+    const rows = [['日付', '出勤', '退勤', '休憩', '時間休', '勤務', '時間外']];
+    Object.keys(state.records).filter(d => d.startsWith(ym)).sort().forEach(d => {
+      const r = state.records[d], c = calcDay(r);
+      rows.push([d, r.in || '', r.out || '', c ? hmShort(c.br) : '', hmShort(r.leave || 0), c ? hmShort(c.work) : '', c ? hmShort(c.over) : '']);
+    });
+    const csv = '\uFEFF' + rows.map(r => r.join(',')).join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = `勤務記録_${ym}.csv`; a.click(); URL.revokeObjectURL(a.href);
+  });
+
+  // ---------- 設定 ----------
+  function renderBreaks() {
+    $('#bList').innerHTML = state.settings.breaks.map((b, i) => `
+      <div class="brow">
+        <input type="time" step="60" value="${b.s}" data-bi="${i}" data-bk="s"> 〜
+        <input type="time" step="60" value="${b.e}" data-bi="${i}" data-bk="e">
+        <span class="hint" style="margin:0">${(toMin(b.e) > toMin(b.s)) ? dur(toMin(b.e) - toMin(b.s)) : ''}</span>
+        <button class="btn small danger" data-brm="${i}">削除</button>
+      </div>`).join('') || '<p class="hint">休憩が登録されていません。</p>';
+    $$('[data-bi]').forEach(inp => inp.addEventListener('change', () => {
+      state.settings.breaks[inp.dataset.bi][inp.dataset.bk] = inp.value; settingsChanged(true);
+    }));
+    $$('[data-brm]').forEach(b => b.addEventListener('click', () => {
+      state.settings.breaks.splice(+b.dataset.brm, 1); settingsChanged(true);
+    }));
+  }
+  function renderSummary() {
+    const sch = scheduled();
+    $('#sSummary').innerHTML = sch.ok
+      ? `所定 ${state.settings.start}〜${state.settings.end}（拘束 ${dur(sch.E - sch.S)}）− 休憩 ${dur(sch.br)} ＝ <b>勤務 ${dur(sch.total)}</b>`
+      : `<span style="color:var(--bad)">勤務開始・終了を正しく入力してください。</span>`;
+  }
+  function settingsChanged(rebuild) {
+    save(); if (rebuild) renderBreaks(); renderSummary(); renderToday(); renderLeave();
+  }
+  $('#sStart').addEventListener('change', () => { state.settings.start = $('#sStart').value; settingsChanged(); });
+  $('#sEnd').addEventListener('change', () => { state.settings.end = $('#sEnd').value; settingsChanged(); });
+  $('#addBreak').addEventListener('click', () => { state.settings.breaks.push({ s: '12:00', e: '12:45' }); settingsChanged(true); });
+  $('#resetAll').addEventListener('click', () => {
+    if (!confirm('すべての勤務記録を削除します。よろしいですか？（設定は残ります）')) return;
+    state.records = {}; save(); renderRecords();
+  });
+
+  // ---------- 初期化 ----------
+  load();
+  $('#tDate').value = todayStr();
+  $('#rMonth').value = todayStr().slice(0, 7);
+  $('#sStart').value = state.settings.start;
+  $('#sEnd').value = state.settings.end;
+  $('#lEnd').value = state.settings.end;
+  $('#tDate').dispatchEvent(new Event('change'));
+  renderBreaks(); renderSummary(); renderLeave();
+})();
+</script>
+</body>
+</html>
