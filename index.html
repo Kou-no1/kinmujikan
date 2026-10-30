@@ -117,7 +117,8 @@ th{color:var(--muted);font-size:.8rem}
         <input type="number" id="tLeaveM" min="0" max="59" step="5" value="0">分</span>
       </label>
     </div>
-    <p class="hint">日付を先の日にすると、その日の休憩（曜日・特別日程）で予定の計算ができます。</p>
+    <div style="margin-top:12px"><div class="hint" style="margin:0 0 6px;font-weight:600">この日の日課</div><div class="modes" id="tPat"></div></div>
+    <p class="hint">日付を先の日にすると、その日の休憩（日課・曜日・特別日程）で予定の計算ができます。</p>
     <div id="todayOut"></div>
     <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn primary" id="saveRec">記録に保存</button>
@@ -144,6 +145,7 @@ th{color:var(--muted);font-size:.8rem}
         <input type="number" id="lM" min="0" max="59" step="5" value="0">分</span>
       </label>
     </div>
+    <div style="margin-top:12px"><div class="hint" style="margin:0 0 6px;font-weight:600">この日の日課</div><div class="modes" id="lPat"></div></div>
     <p class="hint">休暇の途中に設定した休憩時間が入る場合、その分は休暇時間に数えず、時刻を自動でずらして計算します。</p>
     <div id="leaveOut"></div>
     <div class="timeline" id="leaveTl"></div>
@@ -182,7 +184,18 @@ th{color:var(--muted);font-size:.8rem}
     <div id="sSummary" class="msg"></div>
   </div>
   <div class="card breaks">
-    <h2>自分の休憩時間</h2>
+    <h2>日課ごとの休憩</h2>
+    <div id="patList"></div>
+    <button class="btn small" id="addPattern">＋ 日課を追加</button>
+    <p class="hint">日課ごとに休憩時間を登録します。「勤務の計算」「時間休の計算」で日課をチェックすると、その休憩で計算します。</p>
+  </div>
+  <div class="card">
+    <h2>曜日ごとの標準の日課</h2>
+    <div class="tbl" id="weekPat"></div>
+    <p class="hint">ここで選んだ日課が、その曜日の標準になります。日付ごとにチェックで別の日課に変えることもできます。「曜日ごとの休憩」を選んだ曜日は、下の設定で計算します。</p>
+  </div>
+  <div class="card breaks">
+    <h2>曜日ごとの休憩（日課を使わない曜日）</h2>
     <div id="bList"></div>
     <button class="btn small" id="addBreak">＋ 休憩を追加</button>
     <p class="hint">休憩ごとに、その休憩を取る曜日をチェックしてください。曜日によって休憩が違う場合は、休憩を追加して曜日を分けます（例：月火木金は 12:15〜13:00、水は 14:30〜15:15）。チェックした曜日の計算にだけ使われます。</p>
@@ -227,16 +240,25 @@ th{color:var(--muted);font-size:.8rem}
   const KEY = 'kinmu-calc-v1';
   const state = {
     settings: { start: '08:15', end: '16:45', breaks: [{ s: '12:15', e: '13:00', days: [1, 2, 3, 4, 5] }] },
-    records: {}
+    records: {},
+    dayPattern: {} // 日付ごとにチェックした日課
   };
+  const defaultPatterns = () => [
+    { id: 'a5', name: 'A日課5時間', breaks: [{ s: '12:15', e: '13:00' }] },
+    { id: 'a6', name: 'A日課6時間', breaks: [{ s: '12:15', e: '13:00' }] },
+    { id: 'b5', name: 'B日課5時間', breaks: [{ s: '12:15', e: '13:00' }] },
+    { id: 'b6', name: 'B日課6時間', breaks: [{ s: '12:15', e: '13:00' }] }
+  ];
   function load() {
     try {
       const d = JSON.parse(localStorage.getItem(KEY));
-      if (d) { Object.assign(state.settings, d.settings || {}); state.records = d.records || {}; }
+      if (d) { Object.assign(state.settings, d.settings || {}); state.records = d.records || {}; state.dayPattern = d.dayPattern || {}; }
     } catch (e) { /* 保存が使えない環境でも動作させる */ }
     // 曜日設定のない古いデータは「毎日」として扱う
     state.settings.breaks.forEach(b => { if (!Array.isArray(b.days)) b.days = [0, 1, 2, 3, 4, 5, 6]; });
     if (!Array.isArray(state.settings.special)) state.settings.special = [];
+    if (!Array.isArray(state.settings.patterns)) state.settings.patterns = defaultPatterns();
+    if (!state.settings.weekPattern || typeof state.settings.weekPattern !== 'object') state.settings.weekPattern = {};
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
 
@@ -261,29 +283,54 @@ th{color:var(--muted);font-size:.8rem}
     });
     return best;
   }
-  // key：日付文字列＝特別日程→曜日設定の順で適用／曜日番号＝曜日設定のみ／null＝すべての休憩
-  function rawBreaks(key) {
-    if (typeof key === 'string') {
+  const pat = id => (state.settings.patterns || []).find(p => p.id === id) || null;
+  // その日の休憩を決める。優先順：日付でチェックした日課 → 特別日程 → 曜日の標準の日課 → 曜日ごとの休憩
+  // key：日付文字列／曜日番号（曜日の設定のみ）／null（すべての休憩）
+  function resolveDay(key) {
+    if (typeof key === 'string' && key) {
+      const p = pat(state.dayPattern[key]);
+      if (p) return { list: p.breaks, label: p.name, kind: 'day' };
       const sp = findSpecial(key);
-      if (sp) return sp.breaks || [];
+      if (sp) {
+        const p2 = pat(sp.pattern);
+        return { list: p2 ? p2.breaks : (sp.breaks || []), label: `特別日程「${sp.name || '無題'}」` + (p2 ? `（${p2.name}）` : ''), kind: 'sp' };
+      }
       key = dowOf(key);
     }
-    return state.settings.breaks.filter(b => key == null || (b.days || []).includes(key));
+    if (typeof key === 'number') {
+      const p = pat(state.settings.weekPattern[key]);
+      if (p) return { list: p.breaks, label: p.name, kind: 'week' };
+    }
+    if (typeof key !== 'number') key = null;
+    return { list: state.settings.breaks.filter(b => key == null || (b.days || []).includes(key)), label: '', kind: 'base' };
   }
+  const rawBreaks = key => resolveDay(key).list;
   const breaks = dow => rawBreaks(dow)
     .map(b => ({ s: toMin(b.s), e: toMin(b.e) }))
     .filter(b => b.s != null && b.e != null && b.e > b.s)
     .sort((a, b) => a.s - b.s);
   const breakIn = (s, e, dow) => breaks(dow).reduce((t, b) => t + overlap(s, e, b.s, b.e), 0);
   const inBreak = (t, dow) => breaks(dow).some(b => t >= b.s && t < b.e);
-  const breakLabel = dow => breaks(dow).map(b => toHM(b.s) + '〜' + toHM(b.e)).join('、') || 'なし';
+  const breakLabelOf = list => list.filter(b => toMin(b.e) > toMin(b.s)).map(b => b.s + '〜' + b.e).join('、') || 'なし';
+  const breakLabel = dow =>breaks(dow).map(b => toHM(b.s) + '〜' + toHM(b.e)).join('、') || 'なし';
   const mdw = ds => { const dt = new Date(ds + 'T00:00'); return (dt.getMonth() + 1) + '/' + dt.getDate() + '(' + DOW[dt.getDay()] + ')'; };
   const dayInfo = key => {
     if (key == null || key === '') return '';
-    if (typeof key === 'number') return `<span class="dayinfo">${DOW[key]}曜日の休憩：${breakLabel(key)}</span>`;
-    const sp = findSpecial(key);
-    return `<span class="dayinfo">${mdw(key)}の休憩：${breakLabel(key)}${sp ? `　★特別日程「${esc(sp.name || '無題')}」` : ''}</span>`;
+    const lb = resolveDay(key).label;
+    const head = typeof key === 'number' ? DOW[key] + '曜日' : mdw(key);
+    return `<span class="dayinfo">${head}の休憩：${breakLabel(key)}${lb ? '　★' + esc(lb) : ''}</span>`;
   };
+  // 日課チェック（日付ごと）
+  function renderChips(boxSel, dateSel, name) {
+    const ds = $(dateSel).value, cur = state.dayPattern[ds] || '';
+    const opts = [{ id: '', name: '自動（曜日・特別日程）' }].concat(state.settings.patterns);
+    $(boxSel).innerHTML = opts.map(p => `<label><input type="radio" name="${name}" value="${p.id}" ${p.id === cur ? 'checked' : ''}>${esc(p.name)}</label>`).join('');
+    $$(`input[name=${name}]`).forEach(r => r.addEventListener('change', () => {
+      const d = $(dateSel).value; if (!d) return;
+      if (r.value) state.dayPattern[d] = r.value; else delete state.dayPattern[d];
+      save(); renderToday(); renderLeave(); renderPlan();
+    }));
+  }
   // 開始時刻から、休憩を除いて n 分進めた時刻
   function addWork(start, n, dow) {
     let t = start, rem = n, guard = 0;
@@ -324,6 +371,7 @@ th{color:var(--muted);font-size:.8rem}
 
   // ---------- 今日の勤務 ----------
   function renderToday() {
+    renderChips('#tPat', '#tDate', 'tpat');
     const out = $('#todayOut');
     const a = toMin($('#tIn').value), b = toMin($('#tOut').value);
     const leave = leaveVal('#tLeaveH', '#tLeaveM');
@@ -377,6 +425,7 @@ th{color:var(--muted);font-size:.8rem}
   // ---------- 時間休 ----------
   const lmode = () => $('input[name=lmode]:checked').value;
   function renderLeave() {
+    renderChips('#lPat', '#lDate', 'lpat');
     const mode = lmode(), dow = $('#lDate').value, sch = scheduled(dow);
     $('#lStartWrap').style.display = mode === 'fromEnd' ? 'none' : '';
     $('#lEndWrap').style.display = mode === 'fromStart' ? 'none' : '';
@@ -436,7 +485,8 @@ th{color:var(--muted);font-size:.8rem}
     $('#rBody').innerHTML = days.map(d => {
       const dt = new Date(d + 'T00:00');
       const r = state.records[d], c = calcDay(r, d);
-      const label = mdw(d) + (findSpecial(d) ? ' ★' : '');
+      const lb = resolveDay(d).label;
+      const label = mdw(d) + (lb ? `<br><span class="hint">${esc(lb)}</span>` : '');
       if (c) { tw += c.work; to += Math.max(0, c.over); tl += c.leave; n++; }
       return `<tr><td>${label}</td><td>${r.in || ''}</td><td>${r.out || ''}</td>
         <td>${c ? hmShort(c.br) : ''}</td><td>${r.leave ? hmShort(r.leave) : ''}</td>
@@ -503,12 +553,12 @@ th{color:var(--muted);font-size:.8rem}
     const sch = scheduled(1);
     if (!sch.ok) { $('#sSummary').innerHTML = `<span style="color:var(--bad)">勤務開始・終了を正しく入力してください。</span>`; return; }
     // 月〜金は常に表示、土日は休憩が設定されているときだけ表示
-    const showDays = ORDER.filter(d => (d >= 1 && d <= 5) || breaks(d).length);
+    const showDays = ORDER.filter(d => (d >= 1 && d <= 5) || breaks(d).length || pat(state.settings.weekPattern[d]));
     $('#sSummary').innerHTML = `所定 ${state.settings.start}〜${state.settings.end}（拘束 ${dur(sch.E - sch.S)}）
       <div class="tbl"><table class="wk" style="margin-top:8px">
-        <thead><tr><th>曜日</th><th>休憩</th><th>休憩計</th><th>勤務時間</th></tr></thead>
+        <thead><tr><th>曜日</th><th>日課</th><th>休憩</th><th>休憩計</th><th>勤務時間</th></tr></thead>
         <tbody>${showDays.map(d => { const sc = scheduled(d);
-          return `<tr><td>${DOW[d]}</td><td>${breakLabel(d)}</td><td>${dur(sc.br)}</td><td><b>${dur(sc.total)}</b></td></tr>`; }).join('')}</tbody>
+          return `<tr><td>${DOW[d]}</td><td>${esc(resolveDay(d).label || '—')}</td><td>${breakLabel(d)}</td><td>${dur(sc.br)}</td><td><b>${dur(sc.total)}</b></td></tr>`; }).join('')}</tbody>
       </table></div>`;
   }
   // ---------- 特別日程 ----------
@@ -530,13 +580,21 @@ th{color:var(--muted);font-size:.8rem}
           <input type="date" value="${sp.to || ''}" data-sp="${i}" data-sk="to" style="flex:0 0 auto">
         </div>
         <div class="days">${ORDER.map(d => `<label><input type="checkbox" data-spd="${i}" value="${d}" ${sp.days.includes(d) ? 'checked' : ''}>${DOW[d]}</label>`).join('')}</div>
+        <div class="row" style="margin-top:8px">
+          <span class="hint" style="margin:0">日課</span>
+          <select data-sp="${i}" data-sk="pattern" style="flex:0 1 auto">
+            <option value="">休憩を個別に設定</option>
+            ${state.settings.patterns.map(p => `<option value="${p.id}" ${sp.pattern === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+          </select>
+        </div>
+        ${pat(sp.pattern) ? `<p class="hint">「${esc(pat(sp.pattern).name)}」の休憩（${breakLabelOf(pat(sp.pattern).breaks)}）を使います。</p>` : `
         <div style="margin-top:8px">
           ${sp.breaks.map((b, j) => `<div class="row" style="margin-bottom:6px">休憩
             <input type="time" step="60" value="${b.s}" data-spb="${i}" data-j="${j}" data-k="s"> 〜
             <input type="time" step="60" value="${b.e}" data-spb="${i}" data-j="${j}" data-k="e">
             <button class="btn small danger" data-spbrm="${i}" data-j="${j}">×</button></div>`).join('') || '<p class="hint" style="margin:0 0 6px">休憩なし</p>'}
           <button class="btn small" data-spadd="${i}">＋ 休憩</button>
-        </div>
+        </div>`}
         ${warn ? `<p class="hint" style="color:var(--bad)">${warn}</p>` : ''}
       </div>`;
     }).join('') || '<p class="hint">特別日程はまだありません。</p>';
@@ -576,18 +634,68 @@ th{color:var(--muted);font-size:.8rem}
     let rows = '';
     for (let i = 0; i < 14; i++) {
       const dt = new Date(base); dt.setDate(base.getDate() + i);
-      const ds = ymd(dt), sp = findSpecial(ds), sc = scheduled(ds);
-      const off = !sp && (dt.getDay() === 0 || dt.getDay() === 6) && !breaks(ds).length;
+      const ds = ymd(dt), rd = resolveDay(ds), sc = scheduled(ds);
+      const off = rd.kind === 'base' && (dt.getDay() === 0 || dt.getDay() === 6) && !breaks(ds).length;
       rows += `<tr style="${off ? 'color:var(--muted)' : ''}"><td>${mdw(ds)}</td>
-        <td>${off ? '—' : breakLabel(ds)}</td><td>${off || !sc.ok ? '—' : dur(sc.total)}</td>
-        <td>${sp ? '★ ' + esc(sp.name || '特別日程') : ''}</td></tr>`;
+        <td>${esc(rd.label)}${rd.kind === 'day' ? ' ✓' : ''}</td>
+        <td>${off ? '—' : breakLabel(ds)}</td><td>${off || !sc.ok ? '—' : dur(sc.total)}</td></tr>`;
     }
-    $('#pTable').innerHTML = `<table class="wk" style="margin-top:8px"><thead><tr><th>日付</th><th>休憩</th><th>勤務時間</th><th>備考</th></tr></thead><tbody>${rows}</tbody></table>`;
+    $('#pTable').innerHTML = `<table class="wk" style="margin-top:8px"><thead><tr><th>日付</th><th>日課・日程</th><th>休憩</th><th>勤務時間</th></tr></thead><tbody>${rows}</tbody></table>
+      <p class="hint">✓ は日付ごとにチェックした日課です。</p>`;
   }
   $('#pFrom').addEventListener('change', renderPlan);
 
+  // ---------- 日課 ----------
+  function renderPatterns() {
+    const ps = state.settings.patterns;
+    $('#patList').innerHTML = ps.map((p, i) => `
+      <div class="brow">
+        <div class="row">
+          <input type="text" value="${esc(p.name)}" data-pn="${i}" style="flex:1 1 160px">
+          <span class="hint" style="margin:0">休憩計 ${dur(p.breaks.reduce((t, b) => t + Math.max(0, (toMin(b.e) || 0) - (toMin(b.s) || 0)), 0))}</span>
+          <button class="btn small danger" data-prm="${i}">削除</button>
+        </div>
+        <div style="margin-top:8px">
+          ${p.breaks.map((b, j) => `<div class="row" style="margin-bottom:6px">休憩
+            <input type="time" step="60" value="${b.s}" data-pb="${i}" data-j="${j}" data-k="s"> 〜
+            <input type="time" step="60" value="${b.e}" data-pb="${i}" data-j="${j}" data-k="e">
+            <button class="btn small danger" data-pbrm="${i}" data-j="${j}">×</button></div>`).join('') || '<p class="hint" style="margin:0 0 6px">休憩なし</p>'}
+          <button class="btn small" data-padd="${i}">＋ 休憩</button>
+        </div>
+      </div>`).join('') || '<p class="hint">日課はまだありません。</p>';
+    $$('[data-pn]').forEach(inp => inp.addEventListener('change', () => {
+      ps[+inp.dataset.pn].name = inp.value.trim() || '無題の日課'; settingsChanged(true);
+    }));
+    $$('[data-pb]').forEach(inp => inp.addEventListener('change', () => {
+      ps[+inp.dataset.pb].breaks[+inp.dataset.j][inp.dataset.k] = inp.value; settingsChanged(true);
+    }));
+    $$('[data-pbrm]').forEach(b => b.addEventListener('click', () => {
+      ps[+b.dataset.pbrm].breaks.splice(+b.dataset.j, 1); settingsChanged(true);
+    }));
+    $$('[data-padd]').forEach(b => b.addEventListener('click', () => {
+      ps[+b.dataset.padd].breaks.push({ s: '12:00', e: '12:45' }); settingsChanged(true);
+    }));
+    $$('[data-prm]').forEach(b => b.addEventListener('click', () => {
+      if (!confirm(`「${ps[+b.dataset.prm].name}」を削除しますか？この日課をチェックしていた日は自動に戻ります。`)) return;
+      ps.splice(+b.dataset.prm, 1); settingsChanged(true);
+    }));
+    // 曜日ごとの標準の日課
+    $('#weekPat').innerHTML = `<table class="wk"><tbody>${ORDER.map(d => `<tr><td style="width:3em">${DOW[d]}</td><td>
+      <select data-wp="${d}"><option value="">曜日ごとの休憩（下の設定）</option>
+      ${ps.map(p => `<option value="${p.id}" ${state.settings.weekPattern[d] === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+      </select></td></tr>`).join('')}</tbody></table>`;
+    $$('[data-wp]').forEach(sel => sel.addEventListener('change', () => {
+      if (sel.value) state.settings.weekPattern[sel.dataset.wp] = sel.value; else delete state.settings.weekPattern[sel.dataset.wp];
+      settingsChanged(true);
+    }));
+  }
+  $('#addPattern').addEventListener('click', () => {
+    state.settings.patterns.push({ id: 'p' + Date.now().toString(36), name: '新しい日課', breaks: [{ s: '12:00', e: '12:45' }] });
+    settingsChanged(true);
+  });
+
   function settingsChanged(rebuild) {
-    save(); if (rebuild) { renderBreaks(); renderSpecial(); } renderSummary(); renderPlan(); renderToday(); renderLeave();
+    save(); if (rebuild) { renderPatterns(); renderBreaks(); renderSpecial(); } renderSummary(); renderPlan(); renderToday(); renderLeave();
   }
   $('#sStart').addEventListener('change', () => { state.settings.start = $('#sStart').value; settingsChanged(); });
   $('#sEnd').addEventListener('change', () => { state.settings.end = $('#sEnd').value; settingsChanged(); });
@@ -607,7 +715,7 @@ th{color:var(--muted);font-size:.8rem}
   $('#sEnd').value = state.settings.end;
   $('#lEnd').value = state.settings.end;
   $('#tDate').dispatchEvent(new Event('change'));
-  renderBreaks(); renderSpecial(); renderSummary(); renderPlan(); renderLeave();
+  renderPatterns(); renderBreaks(); renderSpecial(); renderSummary(); renderPlan(); renderLeave();
 })();
 </script>
 </body>
